@@ -158,6 +158,18 @@ Fork pull requests and Dependabot receive no OIDC token and no secrets. Their ru
 | Untrusted values passed through `env`, never interpolated into scripts | A branch name cannot become shell code |
 | Tool versions pinned in one composite action | The pipeline runs the same Terraform and Atmos as yesterday |
 
+## Repository settings
+
+Part of the pipeline lives outside the YAML, in GitHub's settings.
+
+| Setting | Effect |
+|---------|--------|
+| Ruleset on `main` | Changes arrive by pull request, `CI OK` must pass, no force pushes, no deletion |
+| Environment `workloads` | Requires a reviewer, and only `main` can deploy to it |
+| Secret scanning with push protection | GitHub rejects a push that contains a known credential format, before it reaches the repository |
+| Dependabot alerts | Known vulnerabilities in dependencies are reported |
+| Account IDs as secrets | GitHub masks them in every log line |
+
 ## Turning on the AWS jobs
 
 The static checks work from the first push. Plan, apply and drift stay off until the roles exist:
