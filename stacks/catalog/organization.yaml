@@ -1,0 +1,36 @@
+components:
+  terraform:
+    organization:
+      backend:
+        s3:
+          workspace_key_prefix: myownlandingzone/organization
+      vars:
+        # account.amazonaws.com lets management change member accounts' root email and
+        # contacts, since baseline denies the root user inside them.
+        trusted_service_principals:
+          - sso.amazonaws.com
+          - account.amazonaws.com
+        allowed_regions:
+          - us-east-1
+        bedrock_regions:
+          - us-east-1
+          - us-east-2
+          - us-west-2
+        organizational_units:
+          - Infrastructure
+          - Workloads
+        accounts:
+          identity:
+            organizational_unit: Infrastructure
+          workloads:
+            organizational_unit: Workloads
+        # Users, groups and permission sets are managed from identity, not management.
+        delegated_administrators:
+          sso.amazonaws.com: identity
+        # Root reaches every member account, current and future. The management
+        # account is never affected by SCPs.
+        scp_attachments:
+          Root:
+            - baseline
+            - regions
+            - cost

@@ -1,0 +1,27 @@
+# Runs as the workloads account. Its state bucket predates this repo.
+import:
+  - catalog/defaults
+  - catalog/ip-allocations
+  - catalog/budget
+
+vars:
+  stage: workloads
+  account_id: '{{ with env "WORKLOADS_ACCOUNT_ID" }}{{ . }}{{ else }}{{ fail "Set WORKLOADS_ACCOUNT_ID, see .env.example" }}{{ end }}'
+
+env:
+  AWS_PROFILE: workloads
+
+terraform:
+  backend:
+    s3:
+      bucket: 'tfstate-{{ env "WORKLOADS_ACCOUNT_ID" }}-us-east-1-an'
+
+components:
+  terraform:
+    budget:
+      vars:
+        limit_usd: 10
+        # Created by CloudLaunchpad before the platform adopted them. AWS replaces
+        # both when renamed.
+        budget_name: budget-cloudlaunchpad-monthly
+        anomaly_subscription_name: immediate_subscription_cloudlaunchpad

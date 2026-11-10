@@ -1,0 +1,27 @@
+base_path: "./"
+
+components:
+  terraform:
+    base_path: "components/terraform"
+    apply_auto_approve: false
+    deploy_run_init: true
+    init_run_reconfigure: true
+    auto_generate_backend_file: true
+
+stacks:
+  base_path: "stacks"
+  included_paths:
+    - "deploy/**/*"
+  name_template: "{{.vars.stage}}"
+
+settings:
+  telemetry:
+    enabled: false
+
+# Account IDs come from the environment so they stay out of this public repo.
+# Copy .env.example to .env, fill it in, then: set -a; source .env; set +a
+templates:
+  settings:
+    enabled: true
+    sprig:
+      enabled: true

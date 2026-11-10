@@ -1,0 +1,9 @@
+# Each stack that imports this sets its own permission_sets and assignments.
+# The management stack owns only what a delegated administrator cannot manage:
+# permission sets provisioned to the management account.
+components:
+  terraform:
+    identity-center:
+      backend:
+        s3:
+          workspace_key_prefix: myownlandingzone/identity-center

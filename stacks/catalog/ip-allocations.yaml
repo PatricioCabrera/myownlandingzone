@@ -1,0 +1,19 @@
+# The platform reserves ranges; each project builds its own VPC inside its range.
+# A range is never reused while anything still runs in it.
+components:
+  terraform:
+    ip-allocations:
+      backend:
+        s3:
+          workspace_key_prefix: myownlandingzone/ip-allocations
+      vars:
+        pool_cidr: 10.0.0.0/16
+        allocations:
+          cloudlaunchpad:
+            cidr: 10.0.0.0/21
+            account: workloads
+            description: CloudLaunchpad VPC (its existing range)
+          platform-network:
+            cidr: 10.0.8.0/21
+            account: workloads
+            description: Reserved for the platform's own network component

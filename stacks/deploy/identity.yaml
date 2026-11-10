@@ -1,0 +1,41 @@
+# Runs as the identity account, the delegated administrator for Identity Center.
+# Everyday access to every member account is managed here.
+import:
+  - catalog/defaults
+  - catalog/tfstate
+  - catalog/identity-center
+
+vars:
+  stage: identity
+  account_id: '{{ with env "IDENTITY_ACCOUNT_ID" }}{{ . }}{{ else }}{{ fail "Set IDENTITY_ACCOUNT_ID, see .env.example" }}{{ end }}'
+
+env:
+  AWS_PROFILE: identity
+
+terraform:
+  backend:
+    s3:
+      bucket: 'myownlandingzone-tfstate-{{ env "IDENTITY_ACCOUNT_ID" }}-us-east-1-an'
+
+components:
+  terraform:
+    tfstate:
+      vars:
+        bucket_name: 'myownlandingzone-tfstate-{{ env "IDENTITY_ACCOUNT_ID" }}-us-east-1-an'
+    identity-center:
+      vars:
+        permission_sets:
+          AdministratorAccess:
+            session_duration: PT4H
+            managed_policy_arns:
+              - arn:aws:iam::aws:policy/AdministratorAccess
+          ReadOnlyAccess:
+            session_duration: PT4H
+            managed_policy_arns:
+              - arn:aws:iam::aws:policy/ReadOnlyAccess
+        assignments:
+          AdministratorAccess:
+            - workloads
+          ReadOnlyAccess:
+            - identity
+            - workloads

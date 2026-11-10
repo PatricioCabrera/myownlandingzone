@@ -1,0 +1,7 @@
+# Account-wide cost guardrails. Each stack that imports this sets its own limit.
+components:
+  terraform:
+    budget:
+      backend:
+        s3:
+          workspace_key_prefix: myownlandingzone/budget

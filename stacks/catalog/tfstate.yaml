@@ -1,0 +1,8 @@
+# The bucket that holds state cannot store its own state before it exists, so this
+# one component stays on a local backend.
+components:
+  terraform:
+    tfstate:
+      backend_type: local
+      backend:
+        local: {}
