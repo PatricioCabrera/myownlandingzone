@@ -1,4 +1,5 @@
 data "aws_availability_zones" "available" {
+  #checkov:skip=CKV_AWS_394:Subnets pick zones by index from the sorted list, so a new zone is appended and moves nothing.
   state = "available"
 }
 
@@ -15,6 +16,12 @@ resource "aws_vpc" "this" {
   tags = {
     Name = var.stage
   }
+}
+
+# AWS creates a default security group that allows everything between its members.
+# Adopting it with no rules closes it, so nothing can use it by accident.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
 }
 
 resource "aws_subnet" "this" {

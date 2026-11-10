@@ -21,6 +21,7 @@ My personal AWS foundation, defined as code: the organization, accounts, guardra
 | `tfstate` | `identity` | The state bucket for that account |
 | `budget` | `workloads` | Account-wide monthly budget, Cost Anomaly Detection and their SNS topic |
 | `ip-allocations` | `workloads` | CIDR ranges reserved per project, published to SSM |
+| `ci-identity` | `workloads` | The roles GitHub Actions assumes: read-only for plans, scoped write for applies |
 | `network` | none yet | A VPC for platform or shared infrastructure, when one is needed |
 
 Identity Center itself cannot be created by Terraform in a management account, and the identity source cannot either. Both are console steps in the bootstrap.
@@ -76,4 +77,5 @@ SCPs attach to the organization root, so they reach every member account, includ
 
 - [Bootstrap](docs/bootstrap.md): from a new account to a working organization
 - [Platform model](docs/platform-model.md): stacks, state, permissions, networks, and AI
+- [CI/CD](docs/ci.md): what the pipeline checks, how it reaches AWS, and why
 - [Entra ID federation](docs/entra-federation.md): the identity source runbook

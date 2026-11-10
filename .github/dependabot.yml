@@ -9,6 +9,10 @@ updates:
       - /.github/actions/*
     schedule:
       interval: weekly
+    # Wait a week before adopting a release: most malicious versions are found and
+    # pulled within days.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -18,6 +22,10 @@ updates:
       - /components/terraform/*
     schedule:
       interval: weekly
+    # Wait a week before adopting a release: most malicious versions are found and
+    # pulled within days.
+    cooldown:
+      default-days: 7
     groups:
       providers:
         patterns: ["*"]

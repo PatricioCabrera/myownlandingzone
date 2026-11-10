@@ -45,6 +45,7 @@ resource "terraform_data" "checks" {
 
 # A project reads its range from here and builds its own VPC with it.
 resource "aws_ssm_parameter" "cidr" {
+  #checkov:skip=CKV2_AWS_34:A CIDR range is not a secret. SecureString would make every reader need kms:Decrypt.
   for_each = local.local_allocations
 
   name        = "/platform/ip-allocations/${each.key}/cidr"

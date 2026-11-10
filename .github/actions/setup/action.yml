@@ -19,5 +19,5 @@ runs:
     # Every component uses the same AWS provider. One shared cache downloads it once.
     - shell: bash
       run: |
-        mkdir -p "${RUNNER_TEMP}/tf-plugins"
-        echo "TF_PLUGIN_CACHE_DIR=${RUNNER_TEMP}/tf-plugins" >> "${GITHUB_ENV}"
+        mkdir -p "${HOME}/.terraform.d/plugin-cache"
+        echo "plugin_cache_dir = \"${HOME}/.terraform.d/plugin-cache\"" > "${HOME}/.terraformrc"
