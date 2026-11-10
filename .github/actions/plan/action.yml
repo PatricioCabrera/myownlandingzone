@@ -1,0 +1,91 @@
+name: Atmos plan
+description: >-
+  Assumes a role through OIDC, plans one component and leaves a redacted text
+  plan in plan-out/. The binary plan stays on the runner: it holds state values
+  in clear text, and artifacts of a public repository are downloadable.
+
+inputs:
+  component:
+    description: Atmos component
+    required: true
+  stack:
+    description: Atmos stack, which is also the AWS profile name the stack expects
+    required: true
+  role-arn:
+    description: IAM role to assume
+    required: true
+  lock:
+    description: Take the state lock. Read-only roles cannot, so plans that will not be applied pass false.
+    default: "false"
+
+outputs:
+  changes:
+    description: Number of resources the plan would add, change or destroy
+    value: ${{ steps.plan.outputs.changes }}
+  planfile:
+    description: Path of the binary plan, for an apply in the same job
+    value: ${{ steps.plan.outputs.planfile }}
+
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        role-session-name: gha-${{ github.run_id }}-${{ inputs.component }}
+        aws-region: us-east-1
+
+    # Each stack selects its account with AWS_PROFILE. Giving the short-lived
+    # credentials that profile name keeps the stacks identical locally and in CI.
+    - shell: bash
+      env:
+        STACK: ${{ inputs.stack }}
+      run: |
+        aws configure set aws_access_key_id "${AWS_ACCESS_KEY_ID}" --profile "${STACK}"
+        aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}" --profile "${STACK}"
+        aws configure set aws_session_token "${AWS_SESSION_TOKEN}" --profile "${STACK}"
+        aws configure set region us-east-1 --profile "${STACK}"
+
+    - id: plan
+      shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        STACK: ${{ inputs.stack }}
+        LOCK: ${{ inputs.lock }}
+      run: |
+        set -euo pipefail
+        atmos terraform plan "${COMPONENT}" -s "${STACK}" -lock="${LOCK}" -no-color
+
+        dir="components/terraform/${COMPONENT}"
+        planfile="${STACK}-${COMPONENT}.planfile"
+        mkdir -p plan-out
+
+        # Account IDs are masked in logs because they are secrets, but summaries,
+        # comments and artifacts are not logs. Redact them here.
+        redact() {
+          sed -e "s/${MANAGEMENT_ACCOUNT_ID}/<management>/g" \
+              -e "s/${IDENTITY_ACCOUNT_ID}/<identity>/g" \
+              -e "s/${WORKLOADS_ACCOUNT_ID}/<workloads>/g"
+        }
+        terraform -chdir="${dir}" show -no-color "${planfile}" | redact > plan-out/plan.txt
+        terraform -chdir="${dir}" show -json "${planfile}" > "${RUNNER_TEMP}/plan.json"
+
+        changes="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"] and .change.actions != ["read"])] | length' "${RUNNER_TEMP}/plan.json")"
+        echo "${changes}" > plan-out/changes
+        echo "changes=${changes}" >> "${GITHUB_OUTPUT}"
+        echo "planfile=${planfile}" >> "${GITHUB_OUTPUT}"
+
+        {
+          echo "### Plan: \`${COMPONENT}\` in \`${STACK}\`"
+          echo
+          echo "**${changes}** resource(s) to add, change or destroy."
+          echo
+          echo '<details><summary>Show plan</summary>'
+          echo
+          echo '```hcl'
+          cat plan-out/plan.txt
+          echo '```'
+          echo
+          echo '</details>'
+        } > plan-out/summary.md
+        cat plan-out/summary.md >> "${GITHUB_STEP_SUMMARY}"

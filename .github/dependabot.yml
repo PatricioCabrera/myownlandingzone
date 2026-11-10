@@ -1,0 +1,23 @@
+# Opens pull requests when a pinned dependency has a newer version. Pinning by
+# commit SHA is what makes the pipeline reproducible; this is what keeps the pins
+# from going stale.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directories:
+      - /components/terraform/*
+    schedule:
+      interval: weekly
+    groups:
+      providers:
+        patterns: ["*"]

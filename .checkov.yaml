@@ -1,0 +1,15 @@
+# Checkov reads the Terraform source and compares it with a catalog of known
+# misconfigurations (CIS, AWS best practices). Any finding fails the pipeline.
+#
+# skip-check applies to every resource, so it stays empty. An accepted finding is
+# suppressed next to the resource, with its reason:
+#   #checkov:skip=CKV_AWS_000:why this is fine here
+framework:
+  - terraform
+skip-path:
+  - .terraform
+compact: true
+quiet: true
+soft-fail: false
+download-external-modules: false
+skip-check: []

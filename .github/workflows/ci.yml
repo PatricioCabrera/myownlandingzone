@@ -1,0 +1,435 @@
+name: CI
+
+# One pipeline for every change. A pull request gets the checks and a plan; a
+# merge to main gets the same checks, a fresh plan and, after approval, an apply.
+#
+# No `paths` filter on purpose: a required check that never starts leaves the
+# pull request waiting forever. Every job is cheap, so they all run, and only the
+# plan narrows itself to what changed.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Nothing by default. Each job asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A new push makes the previous pull request run pointless. Runs on main are
+  # never cancelled: one of them may be in the middle of an apply.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ATMOS_TELEMETRY_ENABLED: "false"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  # Placeholders for the jobs that never reach AWS. The stacks only need
+  # something that looks like an account ID to render.
+  MANAGEMENT_ACCOUNT_ID: "111111111111"
+  IDENTITY_ACCOUNT_ID: "111111111111"
+  WORKLOADS_ACCOUNT_ID: "111111111111"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Static checks: no credentials, safe to run on code nobody has reviewed.
+  # ---------------------------------------------------------------------------
+  terraform:
+    name: Format, validate, test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      # -backend=false: validate needs the providers, not the state.
+      - name: terraform validate
+        run: |
+          for dir in components/terraform/*/; do
+            echo "::group::${dir}"
+            terraform -chdir="${dir}" init -backend=false
+            terraform -chdir="${dir}" validate
+            echo "::endgroup::"
+          done
+
+      # Unit tests with the AWS provider mocked. They test the logic the code
+      # adds on top of AWS (validations, calculations), not AWS itself.
+      - name: terraform test
+        run: |
+          for dir in components/terraform/*/; do
+            if [ -d "${dir}tests" ]; then
+              echo "::group::${dir}"
+              terraform -chdir="${dir}" test
+              echo "::endgroup::"
+            fi
+          done
+
+      - name: atmos validate stacks
+        run: atmos validate stacks
+
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.66.0
+
+      - name: Install rulesets
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # the plugin download is rate limited without it
+        run: tflint --init
+
+      # --recursive with an absolute --config lints every component against the
+      # one root config. A bare `tflint` would only look at the repository root.
+      - name: tflint
+        run: tflint --recursive --config="${GITHUB_WORKSPACE}/.tflint.hcl" --chdir components/terraform
+
+  checkov:
+    name: Checkov
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # publish findings to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Checkov
+        run: pipx install checkov==3.4.3
+
+      - name: checkov
+        run: |
+          checkov -d . --config-file .checkov.yaml \
+            -o cli -o sarif --output-file-path console,checkov.sarif
+
+      # Forks and Dependabot get a read-only token, so they cannot publish.
+      - name: Publish findings
+        if: >-
+          always() && github.actor != 'dependabot[bot]' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  secrets:
+    name: Secrets and account IDs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # a secret removed in a later commit is still in the history
+
+      - name: Install Gitleaks
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "${SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz -C "${RUNNER_TEMP}" gitleaks
+          rm gitleaks.tar.gz
+
+      - name: gitleaks
+        run: |
+          "${RUNNER_TEMP}/gitleaks" git --redact --no-banner .
+
+      # This repository is public and its account IDs live in .env. Gitleaks does
+      # not treat an account ID as a secret, so this guard does.
+      - name: No AWS account IDs
+        run: |
+          if git grep -nE '(^|[^0-9])[0-9]{12}([^0-9]|$)' -- . ':!*.lock.hcl' | grep -v '111111111111'; then
+            echo "::error::Found what looks like an AWS account ID. Use the *_ACCOUNT_ID variables instead."
+            exit 1
+          fi
+
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actionlint: is the workflow correct? (syntax, expressions, shell)
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "${SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz -C "${RUNNER_TEMP}" actionlint
+          rm actionlint.tar.gz
+
+      - name: actionlint
+        run: |
+          "${RUNNER_TEMP}/actionlint" -color
+
+      # zizmor: is the workflow safe? (unpinned actions, injection, wide tokens)
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: 1.32.0
+          advanced-security: false
+
+  # ---------------------------------------------------------------------------
+  # Plan: read-only credentials, only for the components that changed.
+  # ---------------------------------------------------------------------------
+  matrix:
+    name: Find affected components
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # needs the base commit to compare against
+
+      - uses: ./.github/actions/setup
+
+      - id: matrix
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "${EVENT}" in
+            pull_request) matrix="$(.github/scripts/matrix.sh affected "origin/${BASE_REF}")" ;;
+            push)         matrix="$(.github/scripts/matrix.sh affected "${BEFORE}")" ;;
+            *)            matrix="$(.github/scripts/matrix.sh all)" ;;
+          esac
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Components to plan: \`${matrix}\`" >> "${GITHUB_STEP_SUMMARY}"
+
+  plan:
+    name: Plan ${{ matrix.component }} (${{ matrix.stack }})
+    needs: matrix
+    # vars.CI_AWS_ENABLED is the switch for everything that touches AWS: it stays
+    # off until the roles in ci-identity exist. Forks and Dependabot never get a
+    # token for AWS, so their pull requests stop at the static checks.
+    if: >-
+      vars.CI_AWS_ENABLED == 'true' && needs.matrix.outputs.matrix != '[]' &&
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # request the OIDC token that AWS exchanges for credentials
+      pull-requests: write # post the plan as a comment
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    env:
+      MANAGEMENT_ACCOUNT_ID: ${{ secrets.MANAGEMENT_ACCOUNT_ID }}
+      IDENTITY_ACCOUNT_ID: ${{ secrets.IDENTITY_ACCOUNT_ID }}
+      WORKLOADS_ACCOUNT_ID: ${{ secrets.WORKLOADS_ACCOUNT_ID }}
+      TF_VAR_notification_email: ${{ secrets.NOTIFICATION_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - id: plan
+        uses: ./.github/actions/plan
+        with:
+          component: ${{ matrix.component }}
+          stack: ${{ matrix.stack }}
+          role-arn: arn:aws:iam::${{ secrets.WORKLOADS_ACCOUNT_ID }}:role/myownlandingzone-ci-plan
+
+      # The estimate reads the plan, not AWS. Credentials are dropped first, so
+      # the tool runs with nothing to steal.
+      - name: Cost estimate
+        continue-on-error: true # informative: a pricing gap must not block a change
+        env:
+          VERSION: 1.10.0
+        run: |
+          rm -rf ~/.aws
+          curl -fsSL "https://github.com/terrateamio/openinfraquote/releases/download/v${VERSION}/oiq-linux-amd64-v${VERSION}.tar.gz" \
+            | tar -xz -C "${RUNNER_TEMP}"
+          curl -fsSL https://oiq.terrateam.io/prices.csv.gz | gunzip > "${RUNNER_TEMP}/prices.csv"
+          oiq="$(find "${RUNNER_TEMP}" -maxdepth 2 -type f -name oiq | head -1)"
+          {
+            echo
+            echo '<details><summary>Monthly cost estimate (OpenInfraQuote)</summary>'
+            echo
+            echo '```'
+            env -i PATH="${PATH}" "${oiq}" match --pricesheet "${RUNNER_TEMP}/prices.csv" "${RUNNER_TEMP}/plan.json" \
+              | env -i PATH="${PATH}" "${oiq}" price --region us-east-1
+            echo '```'
+            echo
+            echo '</details>'
+          } > cost.md
+          cat cost.md >> plan-out/summary.md
+          cat cost.md >> "${GITHUB_STEP_SUMMARY}"
+
+      # One comment per component, updated in place on every push.
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- plan:${{ matrix.stack }}/${{ matrix.component }} -->"
+        run: |
+          { echo "${MARKER}"; head -c 60000 plan-out/summary.md; } > comment.md
+          id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)"
+          if [ -n "${id}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md > /dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md > /dev/null
+          fi
+
+      - name: Record what was planned
+        env:
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
+        run: |
+          jq -n --arg component "${COMPONENT}" --arg stack "${STACK}" \
+            '{component: $component, stack: $stack}' > plan-out/meta.json
+
+      # Only the redacted text leaves the runner. The apply job compares its own
+      # plan against it, so what gets applied is what was reviewed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan-${{ matrix.stack }}-${{ matrix.component }}
+          path: plan-out/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The single required check. Branch protection points here, so adding or
+  # renaming a job never needs a settings change.
+  # ---------------------------------------------------------------------------
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [terraform, tflint, checkov, secrets, workflows, matrix, plan]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      # A skipped job is fine (no component changed). A failed or cancelled one is not.
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: ${RESULTS}"
+          case " ${RESULTS} " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
+
+  # ---------------------------------------------------------------------------
+  # Apply: main only, behind the approval of the GitHub Environment.
+  # ---------------------------------------------------------------------------
+  apply-matrix:
+    name: Find plans with changes
+    needs: [ci-ok, plan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: plan-*
+          path: plans
+
+      # Asking for an approval to apply nothing teaches people to approve blindly.
+      - id: matrix
+        run: |
+          matrix='[]'
+          for dir in plans/*/; do
+            if [ "$(cat "${dir}changes")" -gt 0 ]; then
+              matrix="$(jq -c --slurpfile meta "${dir}meta.json" '. + $meta' <<< "${matrix}")"
+            fi
+          done
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Plans with changes: \`${matrix}\`" >> "${GITHUB_STEP_SUMMARY}"
+
+  apply:
+    name: Apply ${{ matrix.component }} (${{ matrix.stack }})
+    needs: apply-matrix
+    if: needs.apply-matrix.outputs.matrix != '[]'
+    runs-on: ubuntu-24.04
+    # The Environment is the gate: its required reviewer approves in the Actions
+    # UI, and the apply role only trusts tokens issued for this Environment.
+    environment: ${{ matrix.stack }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJSON(needs.apply-matrix.outputs.matrix) }}
+    concurrency:
+      group: apply-${{ matrix.stack }}-${{ matrix.component }}
+      cancel-in-progress: false
+    env:
+      MANAGEMENT_ACCOUNT_ID: ${{ secrets.MANAGEMENT_ACCOUNT_ID }}
+      IDENTITY_ACCOUNT_ID: ${{ secrets.IDENTITY_ACCOUNT_ID }}
+      WORKLOADS_ACCOUNT_ID: ${{ secrets.WORKLOADS_ACCOUNT_ID }}
+      TF_VAR_notification_email: ${{ secrets.NOTIFICATION_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plan-${{ matrix.stack }}-${{ matrix.component }}
+          path: reviewed
+
+      - id: plan
+        uses: ./.github/actions/plan
+        with:
+          component: ${{ matrix.component }}
+          stack: ${{ matrix.stack }}
+          role-arn: arn:aws:iam::${{ secrets.WORKLOADS_ACCOUNT_ID }}:role/myownlandingzone-ci-apply
+          lock: "true"
+
+      # Time passed between the plan and the approval. If AWS or the state moved
+      # in between, stop: the approver did not see this plan.
+      - name: Compare with the reviewed plan
+        run: |
+          if ! diff -u reviewed/plan.txt plan-out/plan.txt; then
+            echo "::error::The plan changed since it was reviewed. Nothing was applied. Re-run the pipeline and review the new plan."
+            exit 1
+          fi
+
+      - name: Apply the plan
+        env:
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
+        run: atmos terraform apply "${COMPONENT}" -s "${STACK}" --from-plan

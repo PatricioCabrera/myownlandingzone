@@ -3,6 +3,7 @@ import:
   - catalog/defaults
   - catalog/ip-allocations
   - catalog/budget
+  - catalog/ci-identity
 
 vars:
   stage: workloads
@@ -16,12 +17,27 @@ terraform:
     s3:
       bucket: 'tfstate-{{ env "WORKLOADS_ACCOUNT_ID" }}-us-east-1-an'
 
+# settings.ci.enabled marks what the pipeline may plan and apply. Anything without
+# it is run by a person. ci-identity must stay that way: see docs/ci.md.
 components:
   terraform:
+    ip-allocations:
+      settings:
+        ci:
+          enabled: true
     budget:
+      settings:
+        ci:
+          enabled: true
       vars:
         limit_usd: 10
         # Created by CloudLaunchpad before the platform adopted them. AWS replaces
         # both when renamed.
         budget_name: budget-cloudlaunchpad-monthly
         anomaly_subscription_name: immediate_subscription_cloudlaunchpad
+    ci-identity:
+      vars:
+        # CloudLaunchpad created this account's GitHub OIDC provider and still owns it.
+        create_oidc_provider: false
+        apply_environment: workloads
+        state_bucket: 'tfstate-{{ env "WORKLOADS_ACCOUNT_ID" }}-us-east-1-an'

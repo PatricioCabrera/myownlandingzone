@@ -1,0 +1,23 @@
+name: Setup Terraform and Atmos
+description: Installs the pinned Terraform and Atmos versions. The one place versions live.
+
+runs:
+  using: composite
+  steps:
+    - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      with:
+        terraform_version: 1.17.1
+        # The wrapper captures stdout for step outputs and mangles exit codes and pipes.
+        terraform_wrapper: false
+
+    - uses: cloudposse/github-action-setup-atmos@ad511faf93143d80f9f73ebdbc00dbdcea6d6bb0 # v3.7.0
+      with:
+        atmos-version: 1.233.2
+        install-wrapper: false
+        checksum-validation: enforce
+
+    # Every component uses the same AWS provider. One shared cache downloads it once.
+    - shell: bash
+      run: |
+        mkdir -p "${RUNNER_TEMP}/tf-plugins"
+        echo "TF_PLUGIN_CACHE_DIR=${RUNNER_TEMP}/tf-plugins" >> "${GITHUB_ENV}"
