@@ -186,9 +186,12 @@ jobs:
           tar -xzf actionlint.tar.gz -C "${RUNNER_TEMP}" actionlint
           rm actionlint.tar.gz
 
+      # `$/` pins a local action to the commit of the running workflow, where `./`
+      # trusts whatever is in the workspace. actionlint does not know the syntax
+      # yet, so that one message is ignored until it does.
       - name: actionlint
         run: |
-          "${RUNNER_TEMP}/actionlint" -color
+          "${RUNNER_TEMP}/actionlint" -color -ignore 'invalid format because ref is missing'
 
       # zizmor: is the workflow safe? (unpinned actions, injection, wide tokens)
       - name: zizmor

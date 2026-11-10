@@ -1,0 +1,8 @@
+# The default rules, plus what this repository knows to be harmless.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "An Atmos workspace_key_prefix is an S3 path. The word 'key' trips the generic API key rule."
+regexTarget = "line"
+regexes = ['''workspace_key_prefix:\s+[a-z0-9/-]+$''']
