@@ -1,3 +1,5 @@
+# Atmos passes stage to every component, so it is declared even where unused.
+# tflint-ignore: terraform_unused_declarations
 variable "stage" {
   description = "Stack name, set by Atmos"
   type        = string

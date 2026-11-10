@@ -16,6 +16,13 @@ variable "notification_email" {
   description = "Receives every budget and anomaly alert. Set through TF_VAR_notification_email so the address stays out of the repo."
   type        = string
   sensitive   = true
+
+  # An unset pipeline secret arrives as an empty string, and the plan would then
+  # replace the subscription with nothing.
+  validation {
+    condition     = can(regex("^[^@ ]+@[^@ ]+$", var.notification_email))
+    error_message = "Set TF_VAR_notification_email to an email address."
+  }
 }
 
 variable "budget_name" {

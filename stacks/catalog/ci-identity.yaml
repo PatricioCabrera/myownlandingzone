@@ -1,0 +1,11 @@
+# The roles GitHub Actions assumes in this account. Applied by a person: CI never
+# changes its own permissions.
+components:
+  terraform:
+    ci-identity:
+      backend:
+        s3:
+          workspace_key_prefix: myownlandingzone/ci-identity
+      vars:
+        # From: gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+        github_sub_prefix: repo:PatricioCabrera@45760950/myownlandingzone@1452736185

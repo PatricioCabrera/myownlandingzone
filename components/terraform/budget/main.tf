@@ -28,6 +28,7 @@ data "aws_iam_policy_document" "allow_services" {
 # policy for both publishing services.
 #trivy:ignore:AWS-0095
 resource "aws_sns_topic" "alerts" {
+  #checkov:skip=CKV_AWS_26:Alert text only. budgets.amazonaws.com cannot use the AWS managed key, and a customer key costs USD 1 a month.
   name = "budget-alerts"
 }
 

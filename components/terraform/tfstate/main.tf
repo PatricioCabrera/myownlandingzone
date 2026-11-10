@@ -2,6 +2,10 @@
 # only accepts it from that account. No global name collisions, and a bucket can
 # never be created in the wrong account.
 resource "aws_s3_bucket" "this" {
+  #checkov:skip=CKV_AWS_145:SSE-S3 encrypts the state. A customer key adds cost and a way to lock the state out.
+  #checkov:skip=CKV_AWS_144:One region by SCP. Versioning is the recovery path.
+  #checkov:skip=CKV_AWS_18:Access logs need a second bucket. The bucket policy and Block Public Access are the control here.
+  #checkov:skip=CKV2_AWS_62:Nothing consumes events from a state bucket.
   bucket           = var.bucket_name
   bucket_namespace = "account-regional"
 
@@ -39,6 +43,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
+  #checkov:skip=CKV_AWS_300:State files are small single-part uploads, so no multipart upload is left to abort.
   bucket = aws_s3_bucket.this.id
 
   rule {

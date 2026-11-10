@@ -1,4 +1,6 @@
 resource "aws_cloudwatch_log_group" "flow_logs" {
+  #checkov:skip=CKV_AWS_158:Flow logs hold connection metadata, encrypted by CloudWatch by default. A customer key adds a monthly cost.
+  #checkov:skip=CKV_AWS_338:Retention is a variable. A year of flow logs is a cost this personal platform does not need.
   name              = "/platform/${var.stage}/vpc-flow-logs"
   retention_in_days = var.flow_log_retention_days
 }
